@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Made Telegram reference-client capability diagnostics safe for TUI embedding.
+- Made Telegram reference-client capability diagnostics safe for TUI embedding, including bounded containment of synchronous and asynchronous diagnostic callback failures.
 
 ## [0.12.12] - 2026-08-05
 

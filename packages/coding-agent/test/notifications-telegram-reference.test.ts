@@ -562,6 +562,67 @@ describe("telegram reference client negotiation", () => {
 			fixture.cleanup();
 		}
 	});
+
+	test("contains an asynchronously rejecting diagnostic callback and keeps handling messages", async () => {
+		const originalWebSocket = globalThis.WebSocket;
+		const fixture = createReferenceClientFixture();
+		const warnings = Promise.withResolvers<void>();
+		const warningCalls: Array<[string, unknown]> = [];
+		const warnSpy = spyOn(logger, "warn").mockImplementation((message, metadata) => {
+			warningCalls.push([message, metadata]);
+			if (warningCalls.length === 4) warnings.resolve();
+		});
+		let callbackCalls = 0;
+		let client: Promise<void> | undefined;
+
+		try {
+			FakeReferenceWebSocket.instances = [];
+			globalThis.WebSocket = FakeReferenceWebSocket as unknown as typeof WebSocket;
+			client = runTelegramReferenceClient({
+				botToken: "bot-token",
+				chatId: "chat-id",
+				endpointFile: fixture.endpointFile,
+				apiBase: "https://telegram.test",
+				fetchImpl: fixture.fetchImpl,
+				onDiagnostic: async () => {
+					callbackCalls++;
+					await Promise.resolve();
+					throw new Error(`Async\u0000Failure:${"m".repeat(160)}`);
+				},
+			});
+
+			const socket = FakeReferenceWebSocket.instances[0]!;
+			socket.emitOpen();
+			socket.emitMessage({ type: "action_unavailable", requiredCapabilities: ["first"] });
+			socket.emitMessage({ type: "action_unavailable", requiredCapabilities: ["second"] });
+			await warnings.promise;
+
+			expect(callbackCalls).toBe(2);
+			expect(warningCalls.map(([message]) => message)).toEqual([
+				"Telegram reference client action unavailable",
+				"Telegram reference client diagnostic callback failed",
+				"Telegram reference client action unavailable",
+				"Telegram reference client diagnostic callback failed",
+			]);
+			const failures = warningCalls
+				.filter(([message]) => message.endsWith("callback failed"))
+				.map(([, metadata]) => metadata as { code: string; errorName: string; errorMessage: string });
+			expect(failures).toHaveLength(2);
+			for (const failure of failures) {
+				expect(failure.code).toBe("diagnostic_callback_failed");
+				expect(failure.errorName).toBe("Error");
+				expect([...failure.errorMessage]).toHaveLength(128);
+				expect(failure.errorMessage).not.toContain("\u0000");
+			}
+			expect(fixture.calls.filter(call => /\/(?:sendMessage|sendPhoto)$/.test(call.url))).toEqual([]);
+			expect(socket.sent).toHaveLength(1);
+		} finally {
+			await stopReferenceClient(client, fixture);
+			warnSpy.mockRestore();
+			globalThis.WebSocket = originalWebSocket;
+			fixture.cleanup();
+		}
+	});
 	test("preserves rendered threaded lanes for sound policy", async () => {
 		const originalWebSocket = globalThis.WebSocket;
 		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "gjc-telegram-reference-lane-test-"));

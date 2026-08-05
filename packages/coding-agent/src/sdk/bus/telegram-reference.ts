@@ -534,7 +534,7 @@ export async function runTelegramReferenceClient(opts: TelegramReferenceOptions)
 			});
 			logger.warn("Telegram reference client action unavailable", diagnostic);
 			try {
-				opts.onDiagnostic?.(diagnostic);
+				await opts.onDiagnostic?.(diagnostic);
 			} catch (error) {
 				logger.warn("Telegram reference client diagnostic callback failed", {
 					code: "diagnostic_callback_failed",
