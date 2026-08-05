@@ -72,6 +72,12 @@ function boundedDiagnosticCallbackError(error: unknown): Readonly<{ errorName: s
 	}
 	return Object.freeze({ errorName, errorMessage });
 }
+function logDiagnosticCallbackFailure(error: unknown): void {
+	logger.warn("Telegram reference client diagnostic callback failed", {
+		code: "diagnostic_callback_failed",
+		...boundedDiagnosticCallbackError(error),
+	});
+}
 
 /** One inline-keyboard button. */
 export interface InlineButton {
@@ -534,12 +540,12 @@ export async function runTelegramReferenceClient(opts: TelegramReferenceOptions)
 			});
 			logger.warn("Telegram reference client action unavailable", diagnostic);
 			try {
-				await opts.onDiagnostic?.(diagnostic);
+				if (opts.onDiagnostic) {
+					const callbackResult: unknown = opts.onDiagnostic(diagnostic);
+					void Promise.resolve(callbackResult).catch(logDiagnosticCallbackFailure);
+				}
 			} catch (error) {
-				logger.warn("Telegram reference client diagnostic callback failed", {
-					code: "diagnostic_callback_failed",
-					...boundedDiagnosticCallbackError(error),
-				});
+				logDiagnosticCallbackFailure(error);
 			}
 			// Diagnostic only: never turn it into a Telegram prompt or option buttons.
 			return;

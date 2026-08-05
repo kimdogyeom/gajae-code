@@ -623,6 +623,46 @@ describe("telegram reference client negotiation", () => {
 			fixture.cleanup();
 		}
 	});
+
+	test("does not let a never-settling diagnostic callback block later messages", async () => {
+		const originalWebSocket = globalThis.WebSocket;
+		const fixture = createReferenceClientFixture();
+		const laterMessageHandled = Promise.withResolvers<void>();
+		const neverSettles = Promise.withResolvers<void>();
+		let callbackCalls = 0;
+		let client: Promise<void> | undefined;
+
+		try {
+			FakeReferenceWebSocket.instances = [];
+			globalThis.WebSocket = FakeReferenceWebSocket as unknown as typeof WebSocket;
+			client = runTelegramReferenceClient({
+				botToken: "bot-token",
+				chatId: "chat-id",
+				endpointFile: fixture.endpointFile,
+				apiBase: "https://telegram.test",
+				fetchImpl: fixture.fetchImpl,
+				onDiagnostic: () => {
+					callbackCalls++;
+					if (callbackCalls === 2) laterMessageHandled.resolve();
+					return neverSettles.promise;
+				},
+			});
+
+			const socket = FakeReferenceWebSocket.instances[0]!;
+			socket.emitOpen();
+			socket.emitMessage({ type: "action_unavailable", requiredCapabilities: ["first"] });
+			socket.emitMessage({ type: "action_unavailable", requiredCapabilities: ["second"] });
+			await laterMessageHandled.promise;
+
+			expect(callbackCalls).toBe(2);
+			expect(fixture.calls.filter(call => /\/(?:sendMessage|sendPhoto)$/.test(call.url))).toEqual([]);
+			expect(socket.sent).toHaveLength(1);
+		} finally {
+			await stopReferenceClient(client, fixture);
+			globalThis.WebSocket = originalWebSocket;
+			fixture.cleanup();
+		}
+	});
 	test("preserves rendered threaded lanes for sound policy", async () => {
 		const originalWebSocket = globalThis.WebSocket;
 		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "gjc-telegram-reference-lane-test-"));
